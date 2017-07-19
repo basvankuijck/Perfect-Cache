@@ -10,20 +10,26 @@ import Foundation
 import PerfectLogger
 import PerfectHTTP
 import PerfectCrypto
+import PerfectLib
 
 open class PerfectCache {
-    private(set) var cacheDirectoryURL: URL
+    private(set) var cacheDirectory: Dir
 
-    public init(folderName: String=".perfect-caches") {
-        let url = try! FileManager.default.url(for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
-        self.cacheDirectoryURL = url.appendingPathComponent(folderName)
-        LogFile.info("PerfectCache initialized in folder: \(cacheDirectoryURL.absoluteString)")
+    public init(folderName: String="./.caches") {
+        self.cacheDirectory = Dir(folderName)
+        LogFile.info("PerfectCache initialized in folder: \(cacheDirectory.path)")
         _optionallyCreateCacheDirectory()
     }
 
     fileprivate func _optionallyCreateCacheDirectory() {
-        if !FileManager.default.fileExists(atPath: cacheDirectoryURL.path) {
-            try? FileManager.default.createDirectory(at: cacheDirectoryURL, withIntermediateDirectories: true, attributes: nil)
+        if !cacheDirectory.exists {
+            do {
+                try cacheDirectory.create()
+                LogFile.debug("PerfectCache: Created directory: \(cacheDirectory.path)")
+
+            } catch let error {
+                LogFile.debug("PerfectCache: Error creating directory \(cacheDirectory.path): \(error)")
+            }
         }
     }
 }
@@ -85,59 +91,58 @@ extension PerfectCache {
     ///   - expires: How long should the cache live? (In seconds)
     /// - Returns: Bool. If a valid cache is found, return true. So the response can be prematurely broken down.
     public func `return`(`for` key: String, with response: HTTPResponse, expires: TimeInterval=3600) -> Bool {
-        guard let cacheFileURL = _getCacheFile(for: key) else {
+        guard let cacheFile = _getCacheFile(for: key) else {
             return false
         }
 
-        return _return(cacheFileURL, with: response, expires: expires)
+        return _return(cacheFile, with: response, expires: expires)
     }
 
-    fileprivate func _return(_ cacheFileURL: URL, with response: HTTPResponse, expires: TimeInterval) -> Bool {
+    fileprivate func _return(_ cacheFile: File, with response: HTTPResponse, expires: TimeInterval) -> Bool {
         _optionallyCreateCacheDirectory()
-        if !FileManager.default.fileExists(atPath: cacheFileURL.path) {
+
+        if !cacheFile.exists {
             return false
         }
-
-        guard let data = FileManager.default.contents(atPath: cacheFileURL.path) else {
+        let expireTime = Int(Date(timeIntervalSinceNow: -expires).timeIntervalSince1970)
+        let fileModificationTime = cacheFile.modificationTime
+        let dif = fileModificationTime - expireTime
+        if dif < 0 {
+            LogFile.warning("PerfectCache: Cache file (\(cacheFile.path)) expired...")
+            _clear(cacheFile)
             return false
         }
 
         do {
-            let attrs = try FileManager.default.attributesOfItem(atPath: cacheFileURL.path)
-            guard let fileCreationDate = attrs[.creationDate] as? Date else {
-                return false
-            }
-            let expireTime = Date(timeIntervalSinceNow: -expires)
-            if expireTime > fileCreationDate {
-                LogFile.warning("PerfectCache: Cache file (\(cacheFileURL.path)) expired...")
-                _clear(cacheFileURL)
-                return false
-            }
-        } catch {
-            return false
+            try cacheFile.open()
+            let bytes = try cacheFile.readSomeBytes(count: cacheFile.size)
+            cacheFile.close()
+            response.setBody(bytes: bytes)
+            response.completed()
+            LogFile.info("PerfectCache: Return from cache (\(cacheFile.path)). Exprires in \(Int(dif)) seconds.")
+            return true
+        } catch let error {
+            LogFile.error("PerfectCache: Error reading cache: \(error)")
         }
-
-        response.setBody(bytes: [UInt8](data))
-        response.completed()
-        LogFile.info("PerfectCache: Return from cache (\(cacheFileURL.path))")
-        return true
+        return false
     }
 
-    fileprivate func _getCacheFile(`for` request: HTTPRequest) -> URL? {
+    fileprivate func _getCacheFile(`for` request: HTTPRequest) -> File? {
         let sortedParams = request.params().sorted { $0.0 < $1.0 }
         return _getCacheFile(for: "\(request.method.description)_\(request.uri)_\(String(describing: sortedParams))")
     }
 
-    fileprivate func _getCacheFile(`for` key: String) -> URL? {
+    fileprivate func _getCacheFile(`for` key: String) -> File? {
         _optionallyCreateCacheDirectory()
 
         guard let cacheFilename = key
             .digest(.sha1)?
             .encode(.hex)?
-            .reduce("", { "\(String(describing: $0))\(String(format: "%c", $1))" }) else {
+            .reduce("", { $0! + String(format: "%c", $1) }) else {
+                print("# 1")
                 return nil
         }
-        return self.cacheDirectoryURL.appendingPathComponent(cacheFilename + ".cache")
+        return File(cacheDirectory.path + cacheFilename + ".cache")
     }
 }
 
@@ -163,59 +168,56 @@ extension PerfectCache {
         _clear(cacheFileURL)
     }
 
-    fileprivate func _clear(_ cacheFileURL: URL) {
-        if !FileManager.default.fileExists(atPath: cacheFileURL.path) {
+    fileprivate func _clear(_ cacheFile: File) {
+        if !cacheFile.exists {
             return
         }
-
         do {
-            try FileManager.default.removeItem(atPath: cacheFileURL.path)
-            LogFile.debug("PerfectCache: Cache file (\(cacheFileURL.path)) removed!")
-            
+            try cacheFile.open(.truncate)
+            cacheFile.delete()
+            LogFile.debug("PerfectCache: Cache file (\(cacheFile.path)) removed!")
         } catch let error {
-            LogFile.error("PerfectCache: Error removing cache file (\(cacheFileURL.path)): \(error)")
+            LogFile.debug("PerfectCache: Error deleting file (\(cacheFile.path)): \(error)")
         }
     }
 
     /// Clears all the cached files
     public func clearAll() {
-        guard let enumerator = FileManager.default.enumerator(at: cacheDirectoryURL, includingPropertiesForKeys: nil) else {
-            return
+        do {
+            try cacheDirectory.delete()
+            LogFile.debug("PerfectCache: Cache cleared")
+        } catch let error {
+            LogFile.debug("PerfectCache: Error deleting directory (\(cacheDirectory.path)): \(error)")
         }
-
-        for case let fileURL as URL in enumerator {
-            try? FileManager.default.removeItem(atPath: fileURL.path)
-        }
-
-        LogFile.debug("PerfectCache: Cache cleared")
     }
 }
 
 extension PerfectCache {
     public func write(response: HTTPResponse, `for` key: String) {
-        guard let cacheFileURL = _getCacheFile(for: key) else {
+        guard let cacheFile = _getCacheFile(for: key) else {
             return
         }
 
-        _write(response: response, at: cacheFileURL)
+        _write(response: response, at: cacheFile)
     }
 
 
     public func write(response: HTTPResponse, `for` request: HTTPRequest) {
-        guard let cacheFileURL = _getCacheFile(for: request) else {
+        guard let cacheFile = _getCacheFile(for: request) else {
             return
         }
-        _write(response: response, at: cacheFileURL)
+        _write(response: response, at: cacheFile)
     }
 
-    private func _write(response: HTTPResponse, `at` cacheFileURL: URL) {
+    private func _write(response: HTTPResponse, `at` cacheFile: File) {
         do {
-            let data = Data(bytes: response.bodyBytes)
-            try data.write(to: cacheFileURL)
-            LogFile.info("PerfectCache: Cache file (\(cacheFileURL.path)) written!")
+            try cacheFile.open(.readWrite)
+            try cacheFile.write(bytes: response.bodyBytes)
+            cacheFile.close()
+            LogFile.info("PerfectCache: Cache file (\(cacheFile.path)) written!")
 
         } catch let error {
-            LogFile.error("PerfectCache: Error writing cache file (\(cacheFileURL.path)): \(error)")
+            LogFile.error("PerfectCache: Error writing cache file (\(cacheFile.path)): \(error)")
         }
     }
 }
