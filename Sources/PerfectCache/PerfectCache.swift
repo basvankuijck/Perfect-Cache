@@ -125,7 +125,7 @@ extension PerfectCache {
 
     fileprivate func _getCacheFile(`for` request: HTTPRequest) -> URL? {
         let sortedParams = request.params().sorted { $0.0 < $1.0 }
-        return _getCacheFile(for: (request.method.description + "_" + request.uri + "_" + String(describing: sortedParams)))
+        return _getCacheFile(for: "\(request.method.description)_\(request.uri)_\(String(describing: sortedParams))")
     }
 
     fileprivate func _getCacheFile(`for` key: String) -> URL? {
@@ -134,7 +134,7 @@ extension PerfectCache {
         guard let cacheFilename = key
             .digest(.sha1)?
             .encode(.hex)?
-            .reduce("", { $0 + String(format: "%c", $1)}) else {
+            .reduce("", { "\(String(describing: $0))\(String(format: "%c", $1))" }) else {
                 return nil
         }
         return self.cacheDirectoryURL.appendingPathComponent(cacheFilename + ".cache")
@@ -211,7 +211,7 @@ extension PerfectCache {
     private func _write(response: HTTPResponse, `at` cacheFileURL: URL) {
         do {
             let data = Data(bytes: response.bodyBytes)
-            try data.write(to: cacheFileURL, options: .atomicWrite)
+            try data.write(to: cacheFileURL)
             LogFile.info("PerfectCache: Cache file (\(cacheFileURL.path)) written!")
 
         } catch let error {
