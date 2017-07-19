@@ -1,7 +1,7 @@
 import XCTest
-@testable import Perfect_Cache
+@testable import PerfectCache
 
-class Perfect_CacheTests: XCTestCase {
+class PerfectCacheTests: XCTestCase {
     func testExample() {
         // This is an example of a functional test case.
         // Use XCTAssert and related functions to verify your tests produce the correct results.
