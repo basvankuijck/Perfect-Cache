@@ -50,8 +50,8 @@ extension PerfectCache {
     ///             }
     ///
     ///             // ... Do some stuff to build of the HTTPResponse
-    ///             response.completed()
     ///             cache.write(response: response, for: request)
+    ///             response.completed()
     ///         }
     ///     }
     /// - Parameters:
