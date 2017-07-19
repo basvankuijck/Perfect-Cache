@@ -9,6 +9,7 @@
 import Foundation
 import PerfectLogger
 import PerfectHTTP
+import SwiftString
 import PerfectCrypto
 import PerfectLib
 
@@ -138,11 +139,22 @@ extension PerfectCache {
         guard let cacheFilename = key
             .digest(.sha1)?
             .encode(.hex)?
-            .reduce("", { $0! + String(format: "%c", $1) }) else {
-                print("# 1")
+            .reduce("", { $0! + String(format: "%c", $1) }),
+            cacheFilename.characters.count > 10 else {
                 return nil
         }
-        return File(cacheDirectory.path + cacheFilename + ".cache")
+        let l1 = cacheFilename[0]
+        let l2 = cacheFilename[1]
+        let dir = Dir("\(cacheDirectory.path)\(l1)/\(l2)")
+        if !dir.exists {
+            do {
+                try dir.create()
+            } catch let error {
+                LogFile.error("PerfectCache: Error creating directory: \(error)")
+                return nil
+            }
+        }
+        return File(dir.path + cacheFilename + ".cache")
     }
 }
 
