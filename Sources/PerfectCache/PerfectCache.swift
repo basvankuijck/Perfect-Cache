@@ -211,7 +211,12 @@ extension PerfectCache {
 
     private func _write(response: HTTPResponse, `at` cacheFile: File) {
         do {
-            try cacheFile.open(.readWrite)
+            let bodyBytes = response.bodyBytes
+            if bodyBytes.count == 0 {
+                LogFile.critical("PerfectCache: Error writing cache file (\(cacheFile.path)): 'Empty body, make sure you call write() before response.complete()'")
+                return
+            }
+            try cacheFile.open(.write)
             try cacheFile.write(bytes: response.bodyBytes)
             cacheFile.close()
             LogFile.info("PerfectCache: Cache file (\(cacheFile.path)) written!")
