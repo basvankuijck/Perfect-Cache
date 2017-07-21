@@ -119,6 +119,7 @@ extension PerfectCache {
             let bytes = try cacheFile.readSomeBytes(count: cacheFile.size)
             cacheFile.close()
             response.setBody(bytes: bytes)
+            response.status = .notModified
             response.completed()
             LogFile.info("PerfectCache: Return from cache (\(cacheFile.path)). Exprires in \(Int(dif)) seconds.")
             return true
